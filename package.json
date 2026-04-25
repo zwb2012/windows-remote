@@ -1,0 +1,16 @@
+{
+  "name": "windows-remote",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node server/index.js",
+    "build": "cd client && npm run build",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0",
+    "node-pty": "^1.0.0",
+    "puppeteer": "^23.0.0"
+  }
+}
