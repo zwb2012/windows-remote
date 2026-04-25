@@ -5,7 +5,7 @@
       <button :class="{ active: tab === 'browser' }" @click="tab = 'browser'">浏览器</button>
     </nav>
     <div class="content">
-      <div v-show="tab === 'terminal'">终端 (TODO)</div>
+      <TerminalView v-show="tab === 'terminal'" />
       <div v-show="tab === 'browser'">浏览器 (TODO)</div>
     </div>
   </div>
@@ -13,6 +13,7 @@
 
 <script setup>
 import { ref } from 'vue';
+import TerminalView from './views/Terminal.vue';
 const tab = ref('terminal');
 </script>
 
