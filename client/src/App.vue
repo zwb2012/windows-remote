@@ -6,7 +6,7 @@
     </nav>
     <div class="content">
       <TerminalView v-show="tab === 'terminal'" />
-      <div v-show="tab === 'browser'">浏览器 (TODO)</div>
+      <BrowserView v-show="tab === 'browser'" />
     </div>
   </div>
 </template>
@@ -14,6 +14,7 @@
 <script setup>
 import { ref } from 'vue';
 import TerminalView from './views/Terminal.vue';
+import BrowserView from './views/Browser.vue';
 const tab = ref('terminal');
 </script>
 
