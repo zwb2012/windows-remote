@@ -4,6 +4,7 @@ const path = require('path');
 const { WebSocketServer } = require('ws');
 const { token, verifyToken, verifyWsToken } = require('./auth');
 const { createSession, getSession, destroySession, resizeSession } = require('./terminal');
+const browserManager = require('./browser');
 
 const app = express();
 const server = http.createServer(app);
@@ -17,6 +18,7 @@ app.get('/', verifyToken, (req, res) => {
 });
 
 const wssTerminal = new WebSocketServer({ noServer: true });
+const wssBrowser = new WebSocketServer({ noServer: true });
 
 wssTerminal.on('connection', (ws, req) => {
   const id = req.url.match(/\/ws\/terminal\/([^?]+)/)?.[1];
@@ -53,6 +55,19 @@ wssTerminal.on('connection', (ws, req) => {
   });
 });
 
+wssBrowser.on('connection', (ws) => {
+  browserManager.setClient(ws);
+  ws.on('message', (msg) => {
+    try {
+      const parsed = JSON.parse(msg.toString());
+      browserManager.handleMessage(parsed);
+    } catch {}
+  });
+  ws.on('close', () => {
+    browserManager.setClient(null);
+  });
+});
+
 server.on('upgrade', (req, socket, head) => {
   if (!verifyWsToken(req.url)) {
     socket.destroy();
@@ -63,9 +78,19 @@ server.on('upgrade', (req, socket, head) => {
     wssTerminal.handleUpgrade(req, socket, head, (ws) => {
       wssTerminal.emit('connection', ws, req);
     });
+  } else if (req.url.includes('/ws/browser')) {
+    wssBrowser.handleUpgrade(req, socket, head, (ws) => {
+      wssBrowser.emit('connection', ws);
+    });
   } else {
     socket.destroy();
   }
+});
+
+browserManager.launch().then(() => {
+  console.log('Browser instance ready');
+}).catch(err => {
+  console.error('Failed to launch browser:', err.message);
 });
 
 server.listen(PORT, () => {
