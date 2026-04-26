@@ -17,12 +17,16 @@ app.get('/', verifyToken, (req, res) => {
   res.sendFile(path.join(__dirname, '../client/dist/index.html'));
 });
 
+const HEARTBEAT_INTERVAL = 30000;
 const wssTerminal = new WebSocketServer({ noServer: true });
 const wssBrowser = new WebSocketServer({ noServer: true });
 
 wssTerminal.on('connection', (ws, req) => {
   const id = req.url.match(/\/ws\/terminal\/([^?]+)/)?.[1];
   if (!id) { ws.close(); return; }
+
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
 
   const proc = getSession(id) || createSession(id);
 
@@ -47,7 +51,11 @@ wssTerminal.on('connection', (ws, req) => {
         }
       } catch {}
     }
-    proc.write(typeof msg === 'string' ? msg : msg.toString('utf8'));
+    try {
+      proc.write(typeof msg === 'string' ? msg : msg.toString('utf8'));
+    } catch (err) {
+      console.error('Terminal write error:', err.message);
+    }
   });
 
   ws.on('close', () => {
@@ -56,17 +64,34 @@ wssTerminal.on('connection', (ws, req) => {
 });
 
 wssBrowser.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
   browserManager.setClient(ws);
   ws.on('message', (msg) => {
     try {
       const parsed = JSON.parse(msg.toString());
       browserManager.handleMessage(parsed);
-    } catch {}
+    } catch (err) {
+      console.error('Browser message error:', err.message);
+    }
   });
   ws.on('close', () => {
     browserManager.setClient(null);
   });
 });
+
+const heartbeatTimer = setInterval(() => {
+  [wssTerminal, wssBrowser].forEach((wss) => {
+    wss.clients.forEach((ws) => {
+      if (!ws.isAlive) return ws.terminate();
+      ws.isAlive = false;
+      ws.ping();
+    });
+  });
+}, HEARTBEAT_INTERVAL);
+
+server.on('close', () => clearInterval(heartbeatTimer));
 
 server.on('upgrade', (req, socket, head) => {
   if (!verifyWsToken(req.url)) {

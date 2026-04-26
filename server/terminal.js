@@ -8,7 +8,8 @@ const DEFAULT_SHELL = process.platform === 'win32'
 
 function createSession(id, cols = 80, rows = 24) {
   const shell = process.env.SHELL_PATH || DEFAULT_SHELL;
-  const proc = pty.spawn(shell, [], {
+  const args = shell.includes('bash') ? ['--login'] : [];
+  const proc = pty.spawn(shell, args, {
     name: 'xterm-color',
     cols,
     rows,

@@ -110,6 +110,10 @@ function connect() {
       urlInput.value = msg.url;
     } else if (msg.type === 'modeChanged') {
       mode.value = msg.mode;
+    } else if (msg.type === 'browserRestarted') {
+      if (ctx) {
+        ctx.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height);
+      }
     }
   };
   ws.onclose = () => {

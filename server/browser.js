@@ -10,6 +10,7 @@ let screencastSession = null;
 async function launch() {
   browser = await puppeteer.launch({
     headless: 'new',
+    executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1280,720']
   });
   page = await browser.newPage();
@@ -23,6 +24,33 @@ async function launch() {
       }
     }
   });
+
+  // Keep-alive: auto-relaunch on browser/process disconnect
+  browser.on('disconnected', async () => {
+    console.log('Browser disconnected, reconnecting...');
+    await relaunch();
+  });
+}
+
+async function relaunch() {
+  inputSession = null;
+  screencastSession = null;
+  page = null;
+  browser = null;
+  try {
+    await launch();
+  } catch (err) {
+    console.error('Browser relaunch failed:', err.message);
+    // Retry after delay
+    setTimeout(() => relaunch(), 5000);
+    return;
+  }
+  // Restore screencast mode if previously active
+  if (currentMode === 'screencast') {
+    currentMode = 'cdp';
+    await switchMode('screencast');
+  }
+  send({ type: 'browserRestarted' });
 }
 
 function setClient(ws) {
@@ -37,18 +65,30 @@ function send(data) {
 
 async function sendPageInfo() {
   if (!page) return;
-  send({ type: 'pageInfo', url: page.url(), title: await page.title() });
+  try {
+    send({ type: 'pageInfo', url: page.url(), title: await page.title() });
+  } catch (err) {
+    console.error('sendPageInfo error:', err.message);
+  }
 }
 
 async function sendScreenshot() {
   if (!page) return;
-  const buf = await page.screenshot({ type: 'jpeg', quality: 70 });
-  send({ type: 'frame', data: buf.toString('base64') });
+  try {
+    const buf = await page.screenshot({ type: 'jpeg', quality: 70 });
+    send({ type: 'frame', data: buf.toString('base64') });
+  } catch (err) {
+    console.error('sendScreenshot error:', err.message);
+  }
 }
 
 async function getInputSession() {
-  if (!inputSession) {
-    inputSession = await page.createCDPSession();
+  if (!inputSession && page) {
+    try {
+      inputSession = await page.createCDPSession();
+    } catch (err) {
+      console.error('getInputSession error:', err.message);
+    }
   }
   return inputSession;
 }
@@ -65,72 +105,102 @@ async function navigate(url) {
 
 async function handleMouse(msg) {
   if (!page) return;
-  const cdp = await getInputSession();
-  if (msg.action === 'click') {
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: msg.x, y: msg.y, button: 'left', clickCount: 1 });
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: msg.x, y: msg.y, button: 'left', clickCount: 1 });
-  } else if (msg.action === 'scroll') {
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: msg.x, y: msg.y, deltaX: 0, deltaY: msg.deltaY || 100 });
-  } else if (msg.action === 'move') {
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: msg.x, y: msg.y });
+  try {
+    const cdp = await getInputSession();
+    if (!cdp) return;
+    if (msg.action === 'click') {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: msg.x, y: msg.y, button: 'left', clickCount: 1 });
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: msg.x, y: msg.y, button: 'left', clickCount: 1 });
+    } else if (msg.action === 'scroll') {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: msg.x, y: msg.y, deltaX: 0, deltaY: msg.deltaY || 100 });
+    } else if (msg.action === 'move') {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: msg.x, y: msg.y });
+    }
+    if (currentMode === 'cdp') {
+      setTimeout(() => sendScreenshot(), 100);
+    }
+  } catch (err) {
+    console.error('handleMouse error:', err.message);
   }
-  if (currentMode === 'cdp') {
-    setTimeout(() => sendScreenshot(), 100);
-  }
+}
+
+function parseKeyCombo(raw) {
+  const parts = raw.split('+');
+  return { key: parts.pop(), modifiers: parts };
 }
 
 async function handleKeyboard(msg) {
   if (!page) return;
-  if (msg.action === 'press') {
-    await page.keyboard.press(msg.key);
-  } else if (msg.action === 'down') {
-    await page.keyboard.down(msg.key);
-  } else if (msg.action === 'up') {
-    await page.keyboard.up(msg.key);
-  }
-  if (currentMode === 'cdp') {
-    setTimeout(() => sendScreenshot(), 100);
+  try {
+    const { key, modifiers } = parseKeyCombo(msg.key);
+    if (msg.action === 'press') {
+      for (const mod of modifiers) {
+        await page.keyboard.down(mod);
+      }
+      await page.keyboard.press(key);
+      for (const mod of modifiers) {
+        await page.keyboard.up(mod);
+      }
+    } else if (msg.action === 'down') {
+      await page.keyboard.down(key);
+    } else if (msg.action === 'up') {
+      await page.keyboard.up(key);
+    }
+    if (currentMode === 'cdp') {
+      setTimeout(() => sendScreenshot(), 100);
+    }
+  } catch (err) {
+    console.error('handleKeyboard error:', err.message);
   }
 }
-// PLACEHOLDER_BROWSER_CONTINUE
 
 async function switchMode(mode) {
+  if (!page) return;
   if (mode === currentMode) return;
-
-  if (currentMode === 'screencast' && screencastSession) {
-    try {
-      await screencastSession.send('Page.stopScreencast');
-      await screencastSession.detach();
-    } catch {}
-    screencastSession = null;
-  }
-
-  currentMode = mode;
-
-  if (mode === 'screencast') {
-    screencastSession = await page.createCDPSession();
-    screencastSession.on('Page.screencastFrame', async ({ data, sessionId }) => {
-      send({ type: 'frame', data });
+  try {
+    if (currentMode === 'screencast' && screencastSession) {
       try {
-        await screencastSession.send('Page.screencastFrameAck', { sessionId });
+        await screencastSession.send('Page.stopScreencast');
+        await screencastSession.detach();
       } catch {}
-    });
-    await screencastSession.send('Page.startScreencast', {
-      format: 'jpeg', quality: 70, maxWidth: 1280, maxHeight: 720
-    });
-  } else {
-    await sendScreenshot();
-  }
+      screencastSession = null;
+    }
 
-  send({ type: 'modeChanged', mode: currentMode });
+    currentMode = mode;
+
+    if (mode === 'screencast') {
+      screencastSession = await page.createCDPSession();
+      screencastSession.on('Page.screencastFrame', async ({ data, sessionId }) => {
+        send({ type: 'frame', data });
+        try {
+          await screencastSession.send('Page.screencastFrameAck', { sessionId });
+        } catch {}
+      });
+      await screencastSession.send('Page.startScreencast', {
+        format: 'jpeg', quality: 70, maxWidth: 1280, maxHeight: 720
+      });
+    } else {
+      await sendScreenshot();
+    }
+
+    send({ type: 'modeChanged', mode: currentMode });
+  } catch (err) {
+    console.error('switchMode error:', err.message);
+  }
 }
 
 async function handleMessage(msg) {
-  switch (msg.type) {
-    case 'navigate': await navigate(msg.url); break;
-    case 'mouse': await handleMouse(msg); break;
-    case 'keyboard': await handleKeyboard(msg); break;
-    case 'switchMode': await switchMode(msg.mode); break;
+  try {
+    switch (msg.type) {
+      case 'navigate': await navigate(msg.url); break;
+      case 'mouse': await handleMouse(msg); break;
+      case 'keyboard': await handleKeyboard(msg); break;
+      case 'switchMode': await switchMode(msg.mode); break;
+      default:
+        console.error('Unknown message type:', msg.type);
+    }
+  } catch (err) {
+    console.error('handleMessage error:', err.message);
   }
 }
 
