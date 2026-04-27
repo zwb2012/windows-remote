@@ -54,7 +54,8 @@ async function createTab() {
     theme: { background: '#1e1e1e' },
     fontSize: 14,
     fontFamily: 'Consolas, monospace',
-    cursorBlink: true
+    cursorBlink: true,
+    convertEol: true
   });
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
